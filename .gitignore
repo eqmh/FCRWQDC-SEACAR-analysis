@@ -17,4 +17,6 @@ _site/*
 site_libs/*
 
 *.html
+Discrete WQ - 10006.txt
+*.zip
 **/*.quarto_ipynb
