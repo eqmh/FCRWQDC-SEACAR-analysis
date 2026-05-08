@@ -8,8 +8,8 @@ format: html
 library(readr)
 library(dplyr)
 library(ggplot2)
-# library(leaflet)
-# library(DT)
+library(leaflet)
+library(DT)
 library(here)
 
 # Read the data
@@ -21,8 +21,9 @@ df <- readr::read_delim(
 
 ```{r filter-data}
 filtered_data <- df %>%
-  filter(ProgramName == "Florida Keys National Marine Sanctuary Water Quality Monitoring Project") %>%
-  filter(ParameterName == "Total Nitrogen")
+  # filter(ProgramName == "Florida Keys National Marine Sanctuary Water Quality Monitoring Project") %>%
+  filter(ProgramName == "Atlantic Oceanographic and Meteorological Laboratory (AOML) South Florida Program Synoptic Shipboard Surveys") %>%
+  filter(ParameterName == "Ammonium (NH4)")
 
 ```
 
