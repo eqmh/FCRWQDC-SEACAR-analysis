@@ -11,7 +11,10 @@ The latest version of these files produced by that workflow can be downloaded fr
 # code-summary: load data
 library(here)
 library(glue)
-parameter_to_plot <- "Salinity"
+# parameter_to_plot <- "Nitrate (NO3)"
+# parameter_to_plot <- "Phosphate, Filtered (PO4)"
+parameter_to_plot <- "Total Nitrogen"
+# parameter_to_plot <- "Chlorophyll a, Corrected for Pheophytin"
 df <- read.csv(here(glue("data/exports/parameterRateOfChange/{parameter_to_plot}.csv")))
 ```
 
@@ -169,4 +172,41 @@ zoom_js <- sprintf(
 
 map <- map |> htmlwidgets::onRender(zoom_js)
 map
+```
+
+```{R, plot slopes}
+#| code-summary: create static map with coordinates
+library(ggplot2)
+library(ggspatial)
+library(dplyr)
+
+# Filter for finite values to avoid errors in scale
+df_static <- df %>% filter(is.finite(significant_slope))
+
+# Calculate symmetric bounds for the divering palette (BrBG)
+quantile_bound <- max(abs(c(
+  quantile(df_static$significant_slope, 0.25, na.rm = TRUE), 
+  quantile(df_static$significant_slope, 0.75, na.rm = TRUE)
+)))
+
+ggplot(df_static) +
+  # Use a light background map theme (osm, cartolight, hotstyle, )
+  annotation_map_tile(type = "cartolight", zoom = 8) + 
+  geom_point(aes(x = OriginalLongitude, y = OriginalLatitude, color = significant_slope),
+             size = 2, alpha = 0.8) +
+  # Diverging Brown-Blue-Green palette to match Leaflet logic
+  scale_color_distiller(palette = "BrBG", 
+                        limit = c(-quantile_bound, quantile_bound),
+                        name = "Significant\nSlope") +
+  # Add geographic context
+  annotation_scale(location = "bl", width_hint = 0.5) +
+  # annotation_north_arrow(location = "bl", which_north = "true", 
+  #                        pad_x = unit(0.75, "in"), pad_y = unit(0.5, "in"),
+  #                        style = north_arrow_fancy_orienteering) +
+  coord_sf(crs = 4326) +
+  theme_minimal() +
+  labs(title = paste("Trends in", parameter_to_plot),
+       subtitle = "Static representation of significant slopes",
+       x = "Longitude", y = "Latitude")
+
 ```
