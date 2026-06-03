@@ -14,8 +14,8 @@ library(here)
 library(glue)
 # parameter_to_plot <- "Nitrate (NO3)"
 # parameter_to_plot <- "Phosphate, Filtered (PO4)"
-parameter_to_plot <- "Total Nitrogen"
-# parameter_to_plot <- "Chlorophyll a, Corrected for Pheophytin"
+# parameter_to_plot <- "Total Nitrogen"
+parameter_to_plot <- "Chlorophyll a, Corrected for Pheophytin"
 df <- read.csv(here(glue("data/exports/parameterRateOfChange/{parameter_to_plot}.csv")))
 ```
 
@@ -79,13 +79,13 @@ library(ggspatial)
 
 # === SET THE VARIABLE YOU WANT TO MAP ===
 # Options: "significant_slope", "coefficient.of.variation", "mean"
-target_variable <- "mean" 
+target_variable <- "significant_slope" 
 
 # Filter for finite values of our chosen variable
 df_static <- df %>% filter(is.finite(.data[[target_variable]]))
 
 # 1. Aggregate points into static H3 hexagons
-static_res <- 6
+static_res <- 5
 hexsf_static <- make_hex_layer(df_static, res = static_res, var_name = target_variable)
 
 # 2. Extract valid non-NA values to calculate scale bounds
@@ -119,7 +119,7 @@ if (target_variable %in% c("mean")) {
   )))
   color_limits <- c(-quantile_bound, quantile_bound)
   
-  p : p + scale_fill_distiller(
+  p <- p + scale_fill_distiller(
     palette = "BrBG", 
     limits = color_limits,
     oob = scales::squish,
