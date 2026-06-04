@@ -12,10 +12,11 @@ The latest version of these files produced by that workflow can be downloaded fr
 ```{R, load data}
 library(here)
 library(glue)
+library(tidyverse)
 # parameter_to_plot <- "Nitrate (NO3)"
-# parameter_to_plot <- "Phosphate, Filtered (PO4)"
+parameter_to_plot <- "Phosphate, Filtered (PO4)"
 # parameter_to_plot <- "Total Nitrogen"
-parameter_to_plot <- "Chlorophyll a, Corrected for Pheophytin"
+# parameter_to_plot <- "Chlorophyll a, Corrected for Pheophytin"
 df <- read.csv(here(glue("data/exports/parameterRateOfChange/{parameter_to_plot}.csv")))
 ```
 
@@ -33,7 +34,7 @@ df_sf <- st_as_sf(df_valid, coords = c("OriginalLongitude", "OriginalLatitude"),
 
 # 3. Retrieve the Florida land boundary polygon
 # (Since SEACAR projects focus on Florida coastal waters, we check against the Florida state boundary)
-fl_map <- map("state", region = "florida", fill = TRUE, plot = FALSE)
+fl_map <- maps::map("state", region = "florida", fill = TRUE, plot = FALSE)
 fl_sf <- st_as_sf(fl_map) %>% st_transform(crs = 4326)
 
 # 4. Check for intersection between the coordinate points and the land polygon
@@ -46,6 +47,66 @@ message(paste("Removed", nrow(df) - nrow(df_clean), "points located on land."))
 
 # Override the main dataset with the marine-only dataset
 df <- df_clean
+```
+
+
+## filter out data points outside the FKNMS boundaries
+```{R}
+library(sf)
+
+# 1. Filter out missing coordinates
+df_valid <- df[!is.na(df$OriginalLongitude) & !is.na(df$OriginalLatitude), ]
+df_sf <- st_as_sf(df_valid, coords = c("OriginalLongitude", "OriginalLatitude"), crs = 4326, remove = FALSE)
+
+# 2. Load the local FKNMS boundary shapefile from the zip archive
+# We check both the project-relative 'data/' directory and absolute '/data' system path
+zip_path <- here("data/fknms_py2.zip")
+if (!file.exists(zip_path)) {
+  zip_path <- "/data/fknms_py2.zip"
+}
+
+fknms_boundary <- tryCatch({
+  message(paste("Attempting to load local FKNMS shapefile from:", zip_path))
+  
+  # Unzip to a temporary directory to extract and read the .shp file cleanly
+  temp_dir <- tempfile()
+  unzip(zip_path, exdir = temp_dir)
+  shp_file <- list.files(temp_dir, pattern = "\\.shp$", full.names = TRUE)
+  
+  if (length(shp_file) == 0) {
+    stop("No .shp file found inside the zip archive.")
+  }
+  
+  st_read(shp_file[1], quiet = TRUE)
+}, error = function(e) {
+  message(paste("Warning: Failed to load local shapefile (", e$message, "). Falling back to bounding coordinates.", sep = ""))
+  # FKNMS extent fallback: West -83.15, East -80.0667, North 25.65, South 24.3
+  bbox <- st_bbox(c(xmin = -83.15, ymin = 24.3, xmax = -80.0667, ymax = 25.65), crs = st_crs(4326))
+  st_as_sfc(bbox)
+})
+
+# Ensure the boundary CRS matches EPSG:4326
+fknms_boundary <- st_transform(fknms_boundary, crs = 4326)
+
+# 3. Represent Biscayne Bay as a simple latitudinal/longitudinal bounding box
+# Bounded on the north by exactly 26.0°N, and on the west to isolate the Atlantic side
+biscayne_bbox <- st_bbox(c(xmin = -80.4, ymin = 25.25, xmax = -80.0, ymax = 26.0), crs = st_crs(4326))
+biscayne_boundary <- st_as_sfc(biscayne_bbox)
+
+# 4. Merge the FKNMS and Biscayne Bay boundaries into a single study area
+fknms_geom <- st_geometry(fknms_boundary)
+study_boundary <- st_union(fknms_geom, biscayne_boundary)
+
+# 5. Check for intersection between points and the combined sanctuary/bay polygon
+inside_study_area <- st_intersects(df_sf, study_boundary, sparse = FALSE)
+
+# 6. Filter dataset
+df_filtered <- df_valid[rowSums(inside_study_area) > 0, ]
+
+message(paste("Removed", nrow(df) - nrow(df_filtered), "points located outside the FKNMS & Biscayne Bay study area."))
+
+# Override the global dataset with the filtered FKNMS + Biscayne Bay data
+df <- df_filtered
 ```
 
 
@@ -69,6 +130,21 @@ make_hex_layer <- function(df, res, var_name = "significant_slope") {
   polys <- cell_to_polygon(agg$h3)
   st_sf(agg, geometry = polys, crs = 4326)
 }
+
+# Define highlighting bounding boxes for sub-regions (FKNMS breakdown + Biscayne Bay)
+regions_list <- list(
+  "Biscayne Bay" = st_bbox(c(xmin = -80.40, ymin = 25.35, xmax = -80.00, ymax = 26.0), crs = st_crs(4326)),
+  "Upper Keys"   = st_bbox(c(xmin = -80.65, ymin = 24.8, xmax = -80.10, ymax = 25.35), crs = st_crs(4326)),
+  "Middle Keys"  = st_bbox(c(xmin = -81.20, ymin = 24.55, xmax = -80.65, ymax = 25.0), crs = st_crs(4326)),
+  "Lower Keys"   = st_bbox(c(xmin = -81.95, ymin = 24.40, xmax = -81.20, ymax = 24.90), crs = st_crs(4326)),
+  "Marquesas + Dry Tortugas" = st_bbox(c(xmin = -83.15, ymin = 24.30, xmax = -81.95, ymax = 24.80), crs = st_crs(4326))
+)
+
+regions_sf <- do.call(rbind, lapply(names(regions_list), function(name) {
+  st_sf(Region = name, geometry = st_as_sfc(regions_list[[name]]))
+}))
+
+regions_sf$Region <- factor(regions_sf$Region, levels = names(regions_list))
 ```
 
 
@@ -76,37 +152,69 @@ make_hex_layer <- function(df, res, var_name = "significant_slope") {
 ```{R}
 library(ggplot2)
 library(ggspatial)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
 
 # === SET THE VARIABLE YOU WANT TO MAP ===
-# Options: "significant_slope", "coefficient.of.variation", "mean"
-target_variable <- "significant_slope" 
+# Options: "significant_slope", "coefficient.of.variation", "Mean", or "mean"
+target_variable <- "Mean" 
+
+# Automatically match case-insensitive options for mean columns
+if (!(target_variable %in% names(df))) {
+  if ("mean" %in% names(df)) {
+    target_variable <- "mean"
+  }
+}
 
 # Filter for finite values of our chosen variable
 df_static <- df %>% filter(is.finite(.data[[target_variable]]))
 
 # 1. Aggregate points into static H3 hexagons
-static_res <- 5
+static_res <- 6
 hexsf_static <- make_hex_layer(df_static, res = static_res, var_name = target_variable)
 
 # 2. Extract valid non-NA values to calculate scale bounds
 valid_vals <- hexsf_static$avg_value[is.finite(hexsf_static$avg_value)]
 
-# 3. Build map base
-p <- ggplot(hexsf_static) +
-  # Light background map tile
-  annotation_map_tile(type = "cartolight", zoom = 8) + 
-  # Render the H3 Hexagons using geom_sf
-  geom_sf(aes(fill = avg_value), color = "#ffffff", linewidth = 0.2, alpha = 0.8)
+# 3. Retrieve high-resolution vector land boundaries using rnaturalearth (1:50m medium-scale resolution)
+# This includes detailed state lines and neighboring countries/islands (Cuba, Bahamas)
+land_states_sf <- ne_states(country = "united states of america", returnclass = "sf") %>% 
+  st_transform(crs = 4326)
 
-# 4. Apply scale options dynamically based on the target variable
-if (target_variable %in% c("mean")) {
+land_world_sf <- ne_countries(scale = "medium", returnclass = "sf") %>% 
+  st_transform(crs = 4326)
+
+# 4. Build map layers using high-resolution spatial boundaries
+p <- ggplot() +
+  # Draw detailed landmass boundaries in dark grey with no city/highway labels
+  geom_sf(data = land_world_sf, fill = "#333333", color = "#222222", linewidth = 0.1) +
+  geom_sf(data = land_states_sf, fill = "#333333", color = "#222222", linewidth = 0.1) +
+  # Render the H3 Hexagons using geom_sf
+  geom_sf(data = hexsf_static, aes(fill = avg_value), color = "#ffffff", linewidth = 0.2, alpha = 0.8) +
+  # Render the regional highlight boxes as colored dashed rectangles
+  geom_sf(data = regions_sf, aes(color = Region), fill = NA, linewidth = 0.7, linetype = "dashed") 
+  # # Label the regions directly on the map for instant visual recognition
+  # geom_sf_label(data = regions_sf, aes(label = Region, color = Region), 
+  #               alpha = 0.85, size = 3, fontface = "bold", show.legend = FALSE) +
+  # Apply distinct color coding to the highlighted study areas
+  scale_color_manual(values = c(
+    "Biscayne Bay" = "#E69F00",  # Ochre/Yellow
+    "Upper Keys"   = "#56B4E9",  # Sky Blue
+    "Middle Keys"  = "#009E73",  # Bluish Green
+    "Lower Keys"   = "#CC79A7",   # Reddish Purple
+    "Dry Tortugas/Marquesas" = "#D55E00"   # Vermillion/Orange-Red
+  ), name = "Regions")
+
+# 5. Apply scale options dynamically based on the target variable
+if (target_variable %in% c("Mean", "mean")) {
   # LOG SCALE scale options for positive-only physical concentration values
   # Filter out any non-positive values to prevent log transformations of <= 0
   positive_vals <- valid_vals[valid_vals > 0]
   color_limits <- c(min(positive_vals, na.rm = TRUE), max(positive_vals, na.rm = TRUE))
   
   p <- p + scale_fill_viridis_c(
-    trans = "log10",                
+    trans = "log10",                  
     limits = color_limits,
     oob = scales::squish,
     name = paste("Avg", target_variable, "\n(Log10 Scale)")
@@ -119,6 +227,7 @@ if (target_variable %in% c("mean")) {
   )))
   color_limits <- c(-quantile_bound, quantile_bound)
   
+  # FIXED: Corrected syntax typo from ':=' to standard R assignment '<-'
   p <- p + scale_fill_distiller(
     palette = "BrBG", 
     limits = color_limits,
@@ -137,15 +246,84 @@ if (target_variable %in% c("mean")) {
   )
 }
 
-# 5. Add spatial context and render the final plot
+# 6. Add spatial context and render the final plot with a white background panel
 p +
-  annotation_scale(location = "bl", width_hint = 0.5) +
+  annotation_scale(location = "br", width_hint = 0.5) +
   coord_sf(crs = 4326,
            xlim = range(df_static$OriginalLongitude, na.rm = TRUE) + c(-0.2, 0.2),
-           ylim = range(df_static$OriginalLatitude, na.rm = TRUE) + c(-0.2, 0.2)) +
+           ylim = range(df_static$OriginalLatitude, na.rm = TRUE) + c(-0.2, 0.6)) +
   theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "#f0f0f0", linewidth = 0.2),
+    panel.grid.minor = element_blank()
+  ) +
   labs(title = paste(gsub("\\.", " ", target_variable), "in", parameter_to_plot),
-       subtitle = paste("Static representation using H3 Hexagons (Res ", static_res, ")", sep=""),
        x = "Longitude", y = "Latitude")
 
+
+```
+
+
+## create boxplots of data distributions by region
+```{R}
+library(ggplot2)
+library(sf)
+library(dplyr)
+
+# 1. Convert the filtered dataset 'df' to an sf spatial object
+df_sf_filtered <- st_as_sf(df, coords = c("OriginalLongitude", "OriginalLatitude"), crs = 4326, remove = FALSE)
+
+# 2. Perform a spatial join (left join) to assign each data point to its intersecting bounding box
+df_with_regions <- st_join(df_sf_filtered, regions_sf, join = st_intersects)
+
+# 3. Clean and convert back to a standard dataframe
+df_plot_box <- df_with_regions %>%
+  filter(!is.na(Region)) %>%
+  st_drop_geometry()
+
+# 4. Match the active variable configured in the static map chunk
+boxplot_variable <- target_variable 
+
+# Filter for finite values of the active target variable
+df_plot_box <- df_plot_box %>% filter(is.finite(.data[[boxplot_variable]]))
+
+# 5. Generate the boxplot visualization matching the map region colors
+bp <- ggplot(df_plot_box, aes(x = Region, y = .data[[boxplot_variable]], fill = Region)) +
+  geom_boxplot(outlier.alpha = 0.3, outlier.size = 1.2, width = 0.5, color = "#222222") +
+  scale_fill_manual(values = c(
+    "Biscayne Bay"             = "#E69F00",  # Ochre/Yellow
+    "Upper Keys"               = "#56B4E9",  # Sky Blue
+    "Middle Keys"              = "#009E73",  # Bluish Green
+    "Lower Keys"               = "#CC79A7",  # Reddish Purple
+    "Marquesas + Dry Tortugas" = "#D55E00"   # Vermillion/Orange-Red
+  )) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.major.y = element_line(color = "#f0f0f0", linewidth = 0.5),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 15, hjust = 1, face = "bold", color = "#333333"),
+    # FIXED: Added solid black lines highlighting the x and y axes
+    axis.line = element_line(color = "black", linewidth = 0.6)
+  ) +
+  # FIXED: Applied y-limits setting the lower bound to 0 and allowing autoscale maximum
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(
+    title = paste("Parameter: ", parameter_to_plot, " | Total points: ", nrow(df_plot_box), sep=""),
+    x = "Region",
+    y = gsub("\\.", " ", boxplot_variable)
+  )
+
+# 6. Apply logarithmic y-scaling if mapping Mean values for scale consistency
+if (boxplot_variable %in% c("mean")) {
+  bp <- bp + scale_y_log10() +
+    labs(y = paste(gsub("\\.", " ", boxplot_variable), "(Log10 Scale)"))
+}
+
+bp
 ```

@@ -1,22 +1,17 @@
 data/
-
 */batched_reports/*
-
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
 .DS_Store
-
 *.Rproj
-
 /.quarto/
 *_cache/
 *.cache/
 *_files/
 _site/*
 site_libs/*
-
 *.html
 Discrete WQ - 10006.txt
 *.zip
