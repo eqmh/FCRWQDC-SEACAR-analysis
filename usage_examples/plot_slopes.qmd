@@ -16,11 +16,11 @@ library(tidyverse)
 # parameter_to_plot <- "Nitrate (NO3)"
 # parameter_to_plot <- "Phosphate, Filtered (PO4)"
 # parameter_to_plot <- "Total Phosphorus"
-# parameter_to_plot <- "Total Nitrogen"
+parameter_to_plot <- "Total Nitrogen"
 # parameter_to_plot <- "Chlorophyll a, Corrected for Pheophytin"
 # parameter_to_plot <- "Turbidity"
 # parameter_to_plot <- "Water Temperature"
-parameter_to_plot <- "Light Extinction Coefficient"
+# parameter_to_plot <- "Light Extinction Coefficient"
 df <- read.csv(here(glue("data/exports/parameterRateOfChange/{parameter_to_plot}.csv")))
 ```
 
@@ -162,7 +162,7 @@ library(rnaturalearthdata)
 
 # === SET THE VARIABLE YOU WANT TO MAP ===
 # Options: "significant_slope", "coefficient.of.variation", or "mean"
-target_variable <- "mean" 
+target_variable <- "significant_slope" 
 
 # Automatically match case-insensitive options for mean columns
 if (!(target_variable %in% names(df))) {
@@ -253,8 +253,8 @@ if (target_variable %in% c("Mean", "mean")) {
 p_final <- p +
   annotation_scale(location = "br", width_hint = 0.5, text_cex = 2) +
   coord_sf(crs = 4326,
-           xlim = range(df_static$OriginalLongitude, na.rm = TRUE) + c(-0.2, 0.2),
-           ylim = range(df_static$OriginalLatitude, na.rm = TRUE) + c(-0.2, 0.6)) +
+           xlim = c(-83.5, -79.5),
+           ylim = c(24, 26.5)) +
   theme_minimal() +
   theme(
     text = element_text(size = 26),
