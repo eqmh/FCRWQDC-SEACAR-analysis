@@ -208,7 +208,7 @@ p <- ggplot() +
     "Middle Keys"  = "#009E73",  # Bluish Green
     "Lower Keys"   = "#CC79A7",   # Reddish Purple
     "Marquesas + Dry Tortugas" = "#D55E00"   # Vermillion/Orange-Red
-  ), name = "Regions")
+  ), name = "Regions", guide = "none")
 
 # 5. Apply scale options dynamically based on the target variable
 if (target_variable %in% c("Mean", "mean")) {
@@ -250,23 +250,30 @@ if (target_variable %in% c("Mean", "mean")) {
 }
 
 # 6. Add spatial context and render the final plot with a white background panel
-p +
-  annotation_scale(location = "br", width_hint = 0.5) +
+p_final <- p +
+  annotation_scale(location = "br", width_hint = 0.5, text_cex = 2) +
   coord_sf(crs = 4326,
            xlim = range(df_static$OriginalLongitude, na.rm = TRUE) + c(-0.2, 0.2),
            ylim = range(df_static$OriginalLatitude, na.rm = TRUE) + c(-0.2, 0.6)) +
   theme_minimal() +
   theme(
+    text = element_text(size = 26),
     panel.background = element_rect(fill = "white", color = NA),
     plot.background = element_rect(fill = "white", color = NA),
     panel.grid.major = element_line(color = "#f0f0f0", linewidth = 0.2),
-    panel.grid.minor = element_blank()
-  ) +
+    panel.grid.minor = element_blank()) 
   # labs(title = paste(gsub("\\.", " ", target_variable), "in", parameter_to_plot),
   #      x = "Longitude", y = "Latitude")
-  labs(x = "Longitude", y = "Latitude")
+  # labs(x = "Longitude", y = "Latitude")
 
+p_final
 
+# Export the static hexagon map as an SVG file
+ggsave(
+  filename = paste0("hexagon_map_", target_variable, ".svg"),
+  plot = p_final,
+  width = 14, height = 7, units = "in"
+)
 ```
 
 
@@ -305,6 +312,7 @@ bp <- ggplot(df_plot_box, aes(x = Region, y = .data[[boxplot_variable]], fill = 
   )) +
   theme_minimal() +
   theme(
+    text = element_text(size = 26),
     panel.background = element_rect(fill = "white", color = NA),
     plot.background = element_rect(fill = "white", color = NA),
     panel.grid.major.y = element_line(color = "#f0f0f0", linewidth = 0.5),
@@ -312,6 +320,7 @@ bp <- ggplot(df_plot_box, aes(x = Region, y = .data[[boxplot_variable]], fill = 
     panel.grid.minor = element_blank(),
     legend.position = "none",
     axis.text.x = element_text(angle = 15, hjust = 1, face = "bold", color = "#333333"),
+    axis.title.x = element_blank(),
     axis.line = element_line(color = "black", linewidth = 0.6)
   ) 
   # scale_y_continuous(limits = c(-0.01, 0.01)) 
@@ -328,4 +337,11 @@ if (boxplot_variable %in% c("mean")) {
 }
 
 bp
+
+# 7. Export the boxplot as an SVG file
+ggsave(
+  filename = paste0("boxplots_", boxplot_variable, ".svg"),
+  plot = bp,
+  width = 10, height = 7, units = "in"
+)
 ```
